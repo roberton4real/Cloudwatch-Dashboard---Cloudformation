@@ -1,5 +1,4 @@
-# Cloudwatch-Dashboard---Cloudformation
-# CloudFormation IaC Project
+# CloudFormation IaC Project by New John Refuse
 
 ## Overview
 
