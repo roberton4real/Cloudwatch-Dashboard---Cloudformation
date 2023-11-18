@@ -1,0 +1,466 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >-
+  'VPC with 4 subnets (2 private / public). Linux Webserver ASG'
+Parameters:
+  ProjectTagValue:
+    Description: Value of the Project Tag
+    Type: String
+    Default: vezzora-ce-test 
+# VPC + Networking resources.
+  VpcCidr:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.10.0.0/16
+# Web server 
+  InstanceType:
+    Description: WebServer instance type
+    Type: String
+    Default: t3.micro
+
+Resources:
+# VPC + Networking resources.
+  ExampleVpc:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      CidrBlock: !Ref VpcCidr
+      Tags:
+        - Key: Name
+          Value: ce-test-vpc
+        - Key: Project
+          Value: !Ref ProjectTagValue
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: IGW
+        - Key: Project
+          Value: !Ref ProjectTagValue
+  GatewayToInternet:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref ExampleVpc
+      InternetGatewayId: !Ref InternetGateway
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref ExampleVpc
+      MapPublicIpOnLaunch: 'true'
+      AvailabilityZone: !Select 
+          - 0
+          - !GetAZs ''
+      CidrBlock: !Select [ 0, !Cidr [ !GetAtt ExampleVpc.CidrBlock, 4, 8 ]]
+      Tags:
+        - Key: Name
+          Value: Public-Subnet1
+        - Key: Project
+          Value: !Ref ProjectTagValue
+  PrivateSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref ExampleVpc
+      AvailabilityZone: !Select 
+        - 0
+        - !GetAZs ''
+      CidrBlock: !Select [ 2, !Cidr [ !GetAtt ExampleVpc.CidrBlock, 4, 8 ]]
+      Tags:
+        - Key: Name
+          Value: Private-Subnet1
+        - Key: Project
+          Value: !Ref ProjectTagValue
+  PublicSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref ExampleVpc
+      MapPublicIpOnLaunch: 'true' 
+      AvailabilityZone: !Select 
+          - 1
+          - !GetAZs ''
+      CidrBlock: !Select [ 1, !Cidr [ !GetAtt ExampleVpc.CidrBlock, 4, 8 ]]
+      Tags:
+        - Key: Name
+          Value: Public-Subnet2
+        - Key: Project
+          Value: !Ref ProjectTagValue
+  PrivateSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref ExampleVpc
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: !Select [3, !Cidr [!GetAtt ExampleVpc.CidrBlock, 4, 8]]
+      Tags:
+        - Key: Name
+          Value: Private-Subnet2
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  NAT:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: NatGateway
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  NATGatewayRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NAT
+
+  EIP:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: EipNatGateway
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref ExampleVpc
+      Tags:
+        - Key: Name
+          Value: 'Public-RT'
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  PrivateRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref ExampleVpc
+      Tags:
+        - Key: Name
+          Value: 'Private-RT'
+        - Key: Project
+          Value: !Ref ProjectTagValue
+
+  PublicSubnetRouteTableAssociation1:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetRouteTableAssociation2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateSubnetRouteTableAssociation1:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetRouteTableAssociation2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  WebServerASG:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      DesiredCapacity: '2'
+      MaxSize: '4'
+      MinSize: '2'
+      VPCZoneIdentifier:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      LaunchConfigurationName: !Ref WebServerLC
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+      Tags:
+        - Key: Name
+          Value: 'WebServer'
+          PropagateAtLaunch: "true"
+
+    
+  WebServerLC:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    Properties:
+      InstanceType: !Ref InstanceType
+      SecurityGroups:
+        - !Ref WebServerSG
+      ImageId: ami-01cae1550c0adea9c
+      UserData: !Base64
+        'Fn::Sub': |
+          #!/bin/bash -xe
+          # Install App (Amazon Linux 2 specific)
+          yum update -y
+          systemctl start amazon-ssm-agent
+          systemctl enable amazon-ssm-agent
+          yum install -y httpd
+          cd /var/www/html/
+          echo "Hello World" > index.html
+          systemctl start httpd
+          systemctl enable httpd
+          # Send logs to CloudWatch Logs
+          aws ssm create-association \
+          --name AWS-ConfigureAWSPackage \
+          --targets '[{"Key":"InstanceIds","Values":["'$(curl http://169.254.169.254/latest/meta-data/instance-id)'"]},{"Key":"tag:Name","Values":["'$(curl http://169.254.169.254/latest/meta-data/hostname)'"]}]]' \
+          --parameters '{"action":["Install"],"name":["AmazonCloudWatchAgent"],"version":["latest"],"installationType":["Agent"],"additionalArguments":["{"logs":{"logs_collected":{"files":{"collect_list":[{"file_path":"/var/log/httpd/access_log","log_group_name":"/webserver/access_log","log_stream_name":"{instance_id}"},{"file_path":"/var/log/httpd/error_log","log_group_name":"/webserver/error_log","log_stream_name":"{instance_id}"}],"log_stream_name":"{instance_id}"}}}}"],"source":["https://s3.amazonaws.com/amazoncloudwatch-agent/amazon_linux/amd64/latest/amazon-cloudwatch-agent.rpm"]]}'
+
+  WebServerSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access
+      VpcId: !Ref ExampleVpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !Select [0, !GetAtt ApplicationLoadBalancer.SecurityGroups]
+
+  ApplicationLoadBalancer:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+
+  ALBListener:
+    Type: 'AWS::ElasticLoadBalancingV2::Listener'
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: '80'
+      Protocol: HTTP
+
+  ALBTargetGroup:
+    Type: 'AWS::ElasticLoadBalancingV2::TargetGroup'
+    Properties:
+      HealthCheckPath: '/index.html'
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref ExampleVpc
+
+  ALBSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Enable HTTP access to ALB from everywhere.
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: '0.0.0.0/0'
+      VpcId: !Ref ExampleVpc
+  
+
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: CPU alarm for WebServers
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: '60'
+      EvaluationPeriods: '1'
+      Threshold: '95'
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value: !Ref WebServerASG
+
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+        AlarmDescription: CPU alarm for WebServers
+        MetricName: CPUUtilization
+        Namespace: AWS/EC2
+        Statistic: Average
+        Period: '180'
+        EvaluationPeriods: '1'
+        Threshold: '5'
+        ComparisonOperator: LessThanThreshold
+        Dimensions:
+          - Name: AutoScalingGroupName
+            Value: !Ref WebServerASG
+
+  WebServerAlarm:
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmName: 'WebServerStatusCheckFailed'
+      AlarmDescription: 'Alarm when the status check fails for WebServer instances'
+      Namespace: 'AWS/EC2'
+      MetricName: 'StatusCheckFailed_System'
+      Dimensions:
+        - Name: 'AutoScalingGroupName'
+          Value: !Ref WebServerASG
+      Statistic: 'Minimum'
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: 'GreaterThanOrEqualToThreshold'
+      TreatMissingData: notBreaching
+          
+
+  WebServerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/autoscaling/${AWS::StackName}/webserver'
+      RetentionInDays: 30
+
+  WebServerLogStream:
+    Type: AWS::Logs::LogStream
+    Properties:
+      LogGroupName: !Ref WebServerLogGroup
+      LogStreamName: !Sub '${AWS::StackName}'
+
+  WebServerMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    DependsOn: WebServerLogGroup
+    Properties:
+      LogGroupName: !Ref WebServerLogGroup
+      FilterPattern: "[ip, identity, user_id, timestamp, request, status_code, size, referrer, user_agent, session_token, signature_version, cipher_suite, auth_type, host, request_id, operation, bucket_name, key, range, response_element, response_error]"
+      MetricTransformations:
+        - MetricName: 'WebServer-Requests'
+          MetricNamespace: 'MyCompany/Logs'
+          MetricValue: '1'
+          DefaultValue: 0
+  WebServerDashboard:
+      Type: 'AWS::CloudWatch::Dashboard'
+      Properties:
+        DashboardName: 'WebServer-Dashboard'
+        DashboardBody: !Sub |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/EC2", "CPUUtilization", "AutoScalingGroupName", "${WebServerASG}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "period": 300,
+                  "title": "CPU Utilization",
+                  "view": "timeSeries"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 6,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/EC2", "NetworkIn", "AutoScalingGroupName", "${WebServerASG}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "period": 300,
+                  "title": "Network In",
+                  "view": "timeSeries"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 6,
+                "y": 6,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/EC2", "NetworkOut", "AutoScalingGroupName", "${WebServerASG}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "period": 300,
+                  "title": "Network Out",
+                  "view": "timeSeries"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 6,
+                "y": 0,
+                "width": 6,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/EC2", "StatusCheckFailed", "AutoScalingGroupName", "${WebServerASG}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "period": 300,
+                  "title": "Status Check Failed",
+                  "view": "timeSeries"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 18,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/EC2", "HTTPCode_Target_2XX_Count", "LoadBalancer", "${ApplicationLoadBalancer}" ],
+                    [ "AWS/EC2", "HTTPCode_Target_3XX_Count", "LoadBalancer", "${ApplicationLoadBalancer}" ],
+                    [ "AWS/EC2", "HTTPCode_Target_4XX_Count", "LoadBalancer", "${ApplicationLoadBalancer}" ],
+                    [ "AWS/EC2", "HTTPCode_Target_5XX_Count", "LoadBalancer", "${ApplicationLoadBalancer}" ]
+                  ],
+                  "region": "${AWS::Region}",
+                  "period": 300,
+                  "title": "ALB HTTP Status Codes",
+                  "view": "timeSeries",
+                  "stacked": true
+                }
+              },
+              {
+                "type": "log",
+                "x": 0,
+                "y": 12,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "query": "fields @timestamp, @message\n| sort @timestamp desc\n| limit 20",
+                  "title": "WebServer Logs",
+                  "region": "${AWS::Region}",
+                  "logGroupName": "${WebServerLogGroup}",
+                  "queryLanguage": "LogQL"
+                }
+              }
+            ]
+          }
+
+Outputs:
+  URL:
+    Description: URL of the website
+    Value: !Join 
+      - ''
+      - - 'http://'
+        - Fn::GetAtt: [ ApplicationLoadBalancer, DNSName ] 
+  WebServerDashboardURL:
+    Description: URL of the CloudWatch dashboard for the WebServer workload
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=WebServer-Dashboard'
+
+
+
